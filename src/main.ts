@@ -17,6 +17,7 @@ import { ensureActorHasWriteAccess } from "./checkActorPermissions";
 import parseArgsStringToArgv from "string-argv";
 import { writeProxyConfig } from "./writeProxyConfig";
 import { checkOutput } from "./checkOutput";
+import { createOAuthProxy } from "./oauthProxy";
 
 export async function main() {
   const program = new Command();
@@ -295,6 +296,43 @@ export async function main() {
         }
       }
     );
+
+  program
+    .command("start-oauth-proxy")
+    .description(
+      "Start the OAuth-aware proxy server for ChatGPT backend authentication"
+    )
+    .requiredOption(
+      "--server-info-file <FILE>",
+      "Path to write the server info JSON ({ port, pid })"
+    )
+    .action(async (options: { serverInfoFile: string }) => {
+      const accessToken = process.env.OAUTH_ACCESS_TOKEN?.trim() ?? "";
+      const refreshToken = process.env.OAUTH_REFRESH_TOKEN?.trim() ?? "";
+
+      if (!accessToken || !refreshToken) {
+        throw new Error(
+          "OAUTH_ACCESS_TOKEN and OAUTH_REFRESH_TOKEN environment variables must be set."
+        );
+      }
+
+      const proxy = createOAuthProxy({
+        serverInfoFile: options.serverInfoFile,
+        accessToken,
+        refreshToken,
+      });
+
+      await proxy.start();
+
+      // Keep the process running; action.yml backgrounds this with &
+      const shutdown = () => {
+        console.log("[oauth-proxy] Shutting down...");
+        proxy.stop();
+        process.exit(0);
+      };
+      process.on("SIGTERM", shutdown);
+      process.on("SIGINT", shutdown);
+    });
 
   program.parse();
 }
