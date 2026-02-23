@@ -9,7 +9,8 @@ const MODEL_PROVIDER = "codex-action-responses-proxy";
 export async function writeProxyConfig(
   codexHome: string,
   port: number,
-  safetyStrategy: SafetyStrategy
+  safetyStrategy: SafetyStrategy,
+  workingDirectory?: string
 ): Promise<void> {
   const configPath = path.join(codexHome, "config.toml");
 
@@ -34,8 +35,13 @@ base_url = "http://127.0.0.1:${port}/v1"
 wire_api = "responses"
 `;
 
+  // Trust the working directory so project-level config (MCP servers, etc.) is loaded.
+  const trust = workingDirectory
+    ? `\n\n# Added by codex-action.\n[projects."${workingDirectory}"]\ntrust_level = "trusted"\n`
+    : "";
+
   // Prepend model_provider at the very top.
-  let output = `${header}${existing}${table}`;
+  let output = `${header}${existing}${table}${trust}`;
 
   if (safetyStrategy === "unprivileged-user") {
     // We know we have already created the CODEX_HOME directory, but it is owned

@@ -86,14 +86,16 @@ export async function main() {
       "--safety-strategy <strategy>",
       "Safety strategy to use. One of 'drop-sudo', 'read-only', 'unprivileged-user', or 'unsafe'."
     )
+    .option("--working-directory <DIRECTORY>", "Working directory to trust for project-level config")
     .action(
       async (options: {
         codexHome: string;
         port: number;
         safetyStrategy: string;
+        workingDirectory?: string;
       }) => {
         const safetyStrategy = toSafetyStrategy(options.safetyStrategy);
-        await writeProxyConfig(options.codexHome, options.port, safetyStrategy);
+        await writeProxyConfig(options.codexHome, options.port, safetyStrategy, options.workingDirectory);
       }
     );
 
