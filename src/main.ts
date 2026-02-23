@@ -309,10 +309,19 @@ export async function main() {
     .action(async (options: { serverInfoFile: string }) => {
       const accessToken = process.env.OAUTH_ACCESS_TOKEN?.trim() ?? "";
       const refreshToken = process.env.OAUTH_REFRESH_TOKEN?.trim() ?? "";
+      const relayUrl = process.env.TOKEN_RELAY_URL?.trim() ?? "";
+      const relayKey = process.env.TOKEN_RELAY_KEY?.trim() ?? "";
 
-      if (!accessToken || !refreshToken) {
+      if (!accessToken) {
         throw new Error(
-          "OAUTH_ACCESS_TOKEN and OAUTH_REFRESH_TOKEN environment variables must be set."
+          "OAUTH_ACCESS_TOKEN environment variable must be set."
+        );
+      }
+
+      // In relay mode, refresh token is not required (relay handles refreshes)
+      if (!relayUrl && !refreshToken) {
+        throw new Error(
+          "OAUTH_REFRESH_TOKEN or TOKEN_RELAY_URL must be set."
         );
       }
 
@@ -320,6 +329,8 @@ export async function main() {
         serverInfoFile: options.serverInfoFile,
         accessToken,
         refreshToken,
+        relayUrl: relayUrl || undefined,
+        relayKey: relayKey || undefined,
       });
 
       await proxy.start();

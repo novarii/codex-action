@@ -26,6 +26,14 @@ inputs:
     description: "OAuth refresh token from ChatGPT."
     required: false
     default: ""
+  token-relay-url:
+    description: "URL of the token relay service (e.g., https://my-relay.vercel.app/api/token). Alternative to providing tokens directly."
+    required: false
+    default: ""
+  token-relay-key:
+    description: "API key for the token relay service."
+    required: false
+    default: ""
   responses-api-endpoint:
     description: "Optional Responses API endpoint override, e.g. https://example.openai.azure.com/openai/v1/responses. Defaults to the proxy's built-in endpoint when empty."
     required: false
@@ -144,13 +152,24 @@ runs:
       run: |
         has_api_key="${{ inputs['openai-api-key'] != '' }}"
         has_oauth="${{ inputs['oauth-access-token'] != '' }}"
+        has_relay="${{ inputs['token-relay-url'] != '' }}"
 
-        if [ "$has_api_key" = "true" ] && [ "$has_oauth" = "true" ]; then
-          echo "Error: provide either openai-api-key or oauth-access-token, not both." >&2
+        # Count how many auth methods are provided
+        count=0
+        [ "$has_api_key" = "true" ] && count=$((count + 1))
+        [ "$has_oauth" = "true" ] && count=$((count + 1))
+        [ "$has_relay" = "true" ] && count=$((count + 1))
+
+        if [ "$count" -gt 1 ]; then
+          echo "Error: provide only one of openai-api-key, oauth-access-token, or token-relay-url." >&2
           exit 1
         fi
 
-        if [ "$has_oauth" = "true" ]; then
+        if [ "$has_relay" = "true" ]; then
+          echo "auth-mode=relay" >> "$GITHUB_OUTPUT"
+          echo "::add-mask::${{ inputs['token-relay-key'] }}"
+          echo "Auth mode: relay"
+        elif [ "$has_oauth" = "true" ]; then
           echo "auth-mode=oauth" >> "$GITHUB_OUTPUT"
           echo "::add-mask::${{ inputs['oauth-access-token'] }}"
           echo "::add-mask::${{ inputs['oauth-refresh-token'] }}"
@@ -261,6 +280,60 @@ runs:
 
     - name: Wait for OAuth proxy
       if: ${{ steps.auth_mode.outputs.auth-mode == 'oauth' }}
+      shell: bash
+      run: |
+        server_info_file="${{ steps.derive_server_info.outputs.server_info_file }}"
+        for _ in {1..10}; do
+          if [ -s "$server_info_file" ]; then
+            break
+          fi
+          sleep 1
+        done
+        if [ ! -s "$server_info_file" ]; then
+          echo "oauth-proxy did not write server info" >&2
+          exit 1
+        fi
+
+        if [ "${RUNNER_OS}" != "Windows" ]; then
+          sudo chmod 444 "$server_info_file"
+          sudo chown root "$server_info_file"
+        fi
+
+    - name: Fetch token from relay
+      if: ${{ steps.auth_mode.outputs.auth-mode == 'relay' }}
+      id: relay_fetch
+      shell: bash
+      env:
+        RELAY_URL: ${{ inputs['token-relay-url'] }}
+        RELAY_KEY: ${{ inputs['token-relay-key'] }}
+      run: |
+        response=$(curl -sf -H "Authorization: Bearer $RELAY_KEY" "$RELAY_URL")
+        if [ -z "$response" ]; then
+          echo "Failed to fetch token from relay" >&2
+          exit 1
+        fi
+        access_token=$(echo "$response" | jq -r '.access_token')
+        if [ -z "$access_token" ] || [ "$access_token" = "null" ]; then
+          echo "Relay response missing access_token" >&2
+          exit 1
+        fi
+        echo "::add-mask::$access_token"
+        echo "access_token=$access_token" >> "$GITHUB_OUTPUT"
+
+    - name: Start OAuth proxy (relay)
+      if: ${{ steps.auth_mode.outputs.auth-mode == 'relay' }}
+      env:
+        OAUTH_ACCESS_TOKEN: ${{ steps.relay_fetch.outputs.access_token }}
+        OAUTH_REFRESH_TOKEN: ""
+        TOKEN_RELAY_URL: ${{ inputs['token-relay-url'] }}
+        TOKEN_RELAY_KEY: ${{ inputs['token-relay-key'] }}
+      shell: bash
+      run: |
+        node "${{ github.action_path }}/dist/main.js" start-oauth-proxy \
+          --server-info-file "${{ steps.derive_server_info.outputs.server_info_file }}" &
+
+    - name: Wait for OAuth proxy (relay)
+      if: ${{ steps.auth_mode.outputs.auth-mode == 'relay' }}
       shell: bash
       run: |
         server_info_file="${{ steps.derive_server_info.outputs.server_info_file }}"

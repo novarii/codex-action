@@ -38,8 +38,12 @@ export interface OAuthProxyOptions {
   serverInfoFile: string;
   /** Initial OAuth access token. */
   accessToken: string;
-  /** OAuth refresh token. */
+  /** OAuth refresh token (empty string in relay mode). */
   refreshToken: string;
+  /** Token relay URL for fetching fresh tokens (relay mode). */
+  relayUrl?: string;
+  /** API key for the token relay. */
+  relayKey?: string;
 }
 
 export interface OAuthProxy {
@@ -52,11 +56,15 @@ export interface OAuthProxy {
 // ---------------------------------------------------------------------------
 
 export function createOAuthProxy(options: OAuthProxyOptions): OAuthProxy {
-  const { serverInfoFile, accessToken, refreshToken } = options;
+  const { serverInfoFile, accessToken, refreshToken, relayUrl, relayKey } = options;
 
   let tokenState: TokenState;
   try {
     tokenState = loadTokens(accessToken, refreshToken);
+    if (relayUrl) {
+      tokenState.relayUrl = relayUrl;
+      tokenState.relayKey = relayKey;
+    }
   } catch (err) {
     throw new Error(
       `Failed to initialise OAuth tokens: ${err instanceof Error ? err.message : err}`,

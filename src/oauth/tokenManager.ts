@@ -20,6 +20,10 @@ export interface TokenState {
   expires: number;
   /** ChatGPT account ID extracted from the JWT. */
   accountId: string;
+  /** Token relay URL for fetching fresh tokens (relay mode). */
+  relayUrl?: string;
+  /** API key for the token relay. */
+  relayKey?: string;
 }
 
 interface JWTPayload {
@@ -145,6 +149,38 @@ export async function refreshAccessToken(
 }
 
 /**
+ * Fetch a fresh access token from the token relay service.
+ */
+async function fetchFromRelay(state: TokenState): Promise<TokenState> {
+  console.log("[oauth-proxy] Fetching fresh token from relay...");
+  const res = await fetch(state.relayUrl!, {
+    headers: { Authorization: `Bearer ${state.relayKey}` },
+  });
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    console.error("[oauth-proxy] Relay fetch failed:", res.status, text);
+    throw new Error("Failed to fetch token from relay");
+  }
+
+  const json = (await res.json()) as {
+    access_token?: string;
+    expires_at?: number;
+  };
+
+  if (!json.access_token || typeof json.expires_at !== "number") {
+    throw new Error("Relay response missing access_token or expires_at");
+  }
+
+  state.accessToken = json.access_token;
+  state.expires = json.expires_at;
+  state.accountId = getAccountId(json.access_token);
+
+  console.log("[oauth-proxy] Token fetched from relay successfully");
+  return state;
+}
+
+/**
  * Ensure the TokenState has a valid (non-expired) access token, refreshing if
  * necessary.  Mutates and returns the same object.
  */
@@ -153,6 +189,11 @@ export async function ensureValidToken(
 ): Promise<TokenState> {
   if (!shouldRefreshToken(state)) {
     return state;
+  }
+
+  // Relay mode: fetch from relay instead of refreshing directly
+  if (state.relayUrl) {
+    return fetchFromRelay(state);
   }
 
   console.log("[oauth-proxy] Access token expired or expiring, refreshing...");
